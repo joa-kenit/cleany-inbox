@@ -1142,7 +1142,7 @@ const handleKeepLatestFromSender = async (sender: string) => {
 
 const handleImmediateUnsubscribe = async (id: string, sender: string) => {
   setProcessingEmailId(id);
-  
+
   try {
     const email = emails.find(e => e.id === id);
     if (!email) {
@@ -1152,13 +1152,13 @@ const handleImmediateUnsubscribe = async (id: string, sender: string) => {
 
     const { data: { session } } = await supabase.auth.getSession();
     const accessToken = session?.provider_token;
-    
+
     if (!accessToken) {
       throw new Error('No access token available');
     }
 
     const gmailId = email.id.split('-')[0];
-    
+
     const response = await fetch(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${gmailId}?format=full`,
       {
@@ -1270,12 +1270,12 @@ let cleanedBody = decodedBody
   .replace(/\s+/g, " ")
   .trim();
 
-    
+
   // DEBUG: Log the decoded body to see what we're working with
   console.log('[Unsubscribe Debug] Email body length:', decodedBody.length);
   console.log('[Unsubscribe Debug] Searching for unsubscribe links...');
   console.log('[Unsubscribe Debug] Body preview:', decodedBody.substring(0, 500));
-        
+
 // UNIVERSAL UNSUBSCRIBE DETECTOR
 const linkRegex = /https?:\/\/[^\s"'<>]+/gi;
 const allLinks = cleanedBody.match(linkRegex) || [];
@@ -1378,7 +1378,7 @@ if (!unsubscribeUrl && emailData?.payload?.headers) {
 
     if (unsubscribeUrl.startsWith('http')) {
       window.open(unsubscribeUrl, '_blank');
-      
+
       const updatedEmails = emails.map(e => 
         e.sender === sender 
           ? { ...e, action: 'unsubscribe' as EmailAction }
@@ -1401,7 +1401,6 @@ if (!unsubscribeUrl && emailData?.payload?.headers) {
     setProcessingEmailId(null);
   }
 };
-
   const handleClean = async () => {
     const keepCount = emails.filter((e) => e.action === "keep").length;
     const deleteCount = emails.filter((e) => e.action === "delete").length;
