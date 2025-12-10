@@ -1142,7 +1142,7 @@ const handleKeepLatestFromSender = async (sender: string) => {
 
 const handleImmediateUnsubscribe = async (id: string, sender: string) => {
   setProcessingEmailId(id);
-
+  
   try {
     const email = emails.find(e => e.id === id);
     if (!email) {
@@ -1152,13 +1152,13 @@ const handleImmediateUnsubscribe = async (id: string, sender: string) => {
 
     const { data: { session } } = await supabase.auth.getSession();
     const accessToken = session?.provider_token;
-
+    
     if (!accessToken) {
       throw new Error('No access token available');
     }
 
     const gmailId = email.id.split('-')[0];
-
+    
     const response = await fetch(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${gmailId}?format=full`,
       {
@@ -1172,202 +1172,90 @@ const handleImmediateUnsubscribe = async (id: string, sender: string) => {
       throw new Error('Failed to fetch email details');
     }
 
-const emailData = await response.json();
-const headers = emailData.payload.headers;
+    const emailData = await response.json();
+    const headers = emailData.payload.headers;
 
-// 🧩 Step 1: Define protected system senders & keywords FIRST
-const SYSTEM_DOMAINS = [
-  "google.com",
-  "gmail.com",
-  "paypal.com",
-  "amazon.com",
-  "apple.com",
-  "microsoft.com",
-  "github.com",
-  "linkedin.com",
-  "facebook.com",
-  "x.com",
-  "twitter.com",
-  "instagram.com",
-  "bankofamerica.com",
-  "chase.com",
-  "wellsfargo.com",
-  "stripe.com",
-  "notion.so",
-  "openai.com",
-  "supabase.io",
-  "vercel.com"
-];
+    // Step 1: Try List-Unsubscribe header first (most reliable)
+    const listUnsubHeader = headers.find(
+      (h: any) => h.name.toLowerCase() === 'list-unsubscribe'
+    );
 
-const SYSTEM_KEYWORDS = [
-  "security alert",
-  "password",
-  "verification code",
-  "two-factor",
-  "receipt",
-  "invoice",
-  "payment",
-  "order confirmation",
-  "purchase",
-  "login",
-  "notification",
-  "access granted"
-];
+    let unsubscribeUrl = null;
 
-// 🧠 Step 2: Skip unsubscribe for system/transactional emails
-const senderDomain = emailData?.payload?.headers
-  ?.find((h: any) => h.name.toLowerCase() === 'from')
-  ?.value?.split('@')[1]
-  ?.toLowerCase();
-
-const subject =
-  emailData?.payload?.headers?.find(
-    (h: any) => h.name.toLowerCase() === 'subject'
-  )?.value || "";
-
-const isSystemEmail =
-  SYSTEM_DOMAINS.some(domain => senderDomain?.includes(domain)) ||
-  SYSTEM_KEYWORDS.some(keyword =>
-    subject.toLowerCase().includes(keyword)
-  );
-
-if (isSystemEmail) {
-  console.log("🧠 Skipping unsubscribe for system email:", senderDomain);
-  toast.info("Skipping unsubscribe: this looks like a system email");
-  return; // 🚀 Stop here — don't process unsubscribe links
-}
-
-// 🧩 Step 3: Continue detecting unsubscribe links
-const listUnsubHeader = headers.find(
-  (h: any) => h.name.toLowerCase() === 'list-unsubscribe'
-);
-
-let unsubscribeUrl = null;
-
-if (listUnsubHeader) {
-  const value = listUnsubHeader.value.replace(/[<>]/g, '').trim();
-  const links = value.split(',').map((l: string) => l.trim());
-  unsubscribeUrl = links.find((l: string) => l.startsWith('http')) || links[0];
-}
-
-if (!unsubscribeUrl || unsubscribeUrl.startsWith('mailto:')) {
-  const bodyPart = emailData.payload.parts?.find(
-    (p: any) => p.mimeType === 'text/html' || p.mimeType === 'text/plain'
-  ) || emailData.payload;
-
-  if (bodyPart.body?.data) {
-    const decodedBody = decodeBase64Utf8(bodyPart.body.data);
-
-// 🧹 Clean decoded body to remove links, HTML tags, and weird characters
-let cleanedBody = decodedBody
-  // Remove long URLs (tracking or redirect links)
-  .replace(/https?:\/\/[^\s<>()]+/g, "")
-  // Remove HTML tags
-  .replace(/<\/?[^>]+(>|$)/g, "")
-  // Remove weird UTF-8 artifacts like â
-  .replace(/[^\x00-\x7F]/g, " ")
-  // Normalize whitespace
-  .replace(/\s+/g, " ")
-  .trim();
-
-
-  // DEBUG: Log the decoded body to see what we're working with
-  console.log('[Unsubscribe Debug] Email body length:', decodedBody.length);
-  console.log('[Unsubscribe Debug] Searching for unsubscribe links...');
-  console.log('[Unsubscribe Debug] Body preview:', decodedBody.substring(0, 500));
-
-// UNIVERSAL UNSUBSCRIBE DETECTOR
-const linkRegex = /https?:\/\/[^\s"'<>]+/gi;
-const allLinks = cleanedBody.match(linkRegex) || [];
-
-const unsubscribeKeywords = /(unsubscribe|opt.?out|remove|manage.?pref|notification|v=off|optin=0)/i;
-const knownRedirectors = /(link\.|click\.|email\.|u\.|campaign\.)/i;
-
-let unsubscribeCandidates = allLinks.filter(
-  link =>
-    unsubscribeKeywords.test(link) ||
-    knownRedirectors.test(link)
-);
-
-console.log("[Unsubscribe Debug] All links found:", allLinks.length);
-console.log("[Unsubscribe Debug] Unsubscribe candidates:", unsubscribeCandidates);
-
-for (const link of unsubscribeCandidates) {
-  if (unsubscribeKeywords.test(link)) {
-    unsubscribeUrl = link;
-    break;
-  }
-}
-
-// fallback: if nothing matched but we found candidates, take the first one
-if (!unsubscribeUrl && unsubscribeCandidates.length > 0) {
-  unsubscribeUrl = unsubscribeCandidates[0];
-  console.log("[Unsubscribe Debug] Using fallback unsubscribe link:", unsubscribeUrl);
-}
-
-// Optional: follow redirects to confirm
-if (unsubscribeUrl && !unsubscribeKeywords.test(unsubscribeUrl)) {
-  try {
-    const res = await fetch(unsubscribeUrl, { method: "HEAD", redirect: "follow" });
-    if (unsubscribeKeywords.test(res.url)) {
-      unsubscribeUrl = res.url;
-      console.log("[Unsubscribe Debug] Confirmed final unsubscribe URL:", unsubscribeUrl);
+    if (listUnsubHeader) {
+      const value = listUnsubHeader.value.replace(/[<>]/g, '').trim();
+      const links = value.split(',').map((l: string) => l.trim());
+      unsubscribeUrl = links.find((l: string) => l.startsWith('http')) || links[0];
     }
-  } catch (err: any) {
-    const msg = err.message || "";
-    // Gracefully handle CORS blocks and network errors
-    if (msg.includes("Failed to fetch") || msg.includes("CORS") || msg.includes("NetworkError")) {
-      console.warn("[Unsubscribe Debug] Skipping link due to CORS restriction:", unsubscribeUrl);
-    } else {
-      console.warn("[Unsubscribe Debug] Redirect check failed:", msg);
-    }
-  }
-}
 
-// 🧩 EXTRA SAFETY: Detect expired or tokenized unsubscribe links
-if (unsubscribeUrl) {
-  // 1️Skip obvious temporary unsubscribe links (contain tokens)
-  if (unsubscribeUrl.includes("token=")) {
-    console.warn("[Unsubscribe Debug] Tokenized unsubscribe link likely expired, skipping:", unsubscribeUrl);
-    unsubscribeUrl = null;
-  } else {
-    try {
-      const res = await fetch(unsubscribeUrl);
-      const text = await res.text();
+    if (!unsubscribeUrl || unsubscribeUrl.startsWith('mailto:')) {
+      const bodyPart = emailData.payload.parts?.find(
+        (p: any) => p.mimeType === 'text/html' || p.mimeType === 'text/plain'
+      ) || emailData.payload;
 
-      // 2Detect pages indicating expired/invalid unsubscribe links
-      if (/expired|invalid|oops/i.test(text)) {
-        console.warn("[Unsubscribe Debug] Link appears expired:", unsubscribeUrl);
-        unsubscribeUrl = null;
-      }
-    } catch (err) {
-      console.warn("[Unsubscribe Debug] Fetch error:", err.message);
-    }
-  }
-}
+      if (bodyPart.body?.data) {
+        const decodedBody = decodeBase64Utf8(bodyPart.body.data);
+        
+        console.log('[Unsubscribe Debug] Email body length:', decodedBody.length);
+        console.log('[Unsubscribe Debug] Searching for unsubscribe links in body...');
+            
+        // Extract ALL links from the body (don't remove them first!)
+        const linkRegex = /https?:\/\/[^\s"'<>)\]]+/gi;
+        const allLinks = decodedBody.match(linkRegex) || [];
+        
+        console.log("[Unsubscribe Debug] Found", allLinks.length, "total links in body");
 
-//  3Fallback: try "List-Unsubscribe" header if available
-if (!unsubscribeUrl && emailData?.payload?.headers) {
-  const listHeader = emailData.payload.headers.find(h => h.name === "List-Unsubscribe");
-  if (listHeader && listHeader.value.includes("https")) {
-    const match = listHeader.value.match(/https?:\/\/[^\s<>]+/i);
-    if (match) {
-      unsubscribeUrl = match[0];
-      console.log("[Unsubscribe Debug] Using List-Unsubscribe header link:", unsubscribeUrl);
-    }
-  }
-}
+        // Search for unsubscribe links with common patterns
+        const unsubscribeKeywords = /(unsubscribe|opt-?out|remove|manage[_-]?pref|notification[_-]?settings|email[_-]?settings|preferences)/i;
+        
+        const unsubscribeCandidates = allLinks.filter(link => 
+          unsubscribeKeywords.test(link)
+        );
 
+        console.log("[Unsubscribe Debug] Unsubscribe candidates:", unsubscribeCandidates);
 
+        if (unsubscribeCandidates.length > 0) {
+          unsubscribeUrl = unsubscribeCandidates[0];
+          console.log("[Unsubscribe Debug] Using unsubscribe link from body:", unsubscribeUrl);
+        }
       }
     }
 
     if (!unsubscribeUrl) {
       toast.error('No unsubscribe link found', {
-        description: 'Try manually searching the email for an unsubscribe link',
+        description: 'This email may not have an unsubscribe option',
         duration: 5000,
       });
       return;
+    }
+
+    console.log("[Unsubscribe] Final unsubscribe URL:", unsubscribeUrl);
+
+    // Check if this looks like a system/transactional email AFTER finding link
+    const SYSTEM_DOMAINS = [
+      "google.com", "gmail.com", "paypal.com", "amazon.com", "apple.com",
+      "microsoft.com", "github.com", "linkedin.com", "facebook.com",
+      "bankofamerica.com", "chase.com", "wellsfargo.com", "stripe.com"
+    ];
+
+    const SYSTEM_KEYWORDS = [
+      "security alert", "password reset", "verification code", "two-factor",
+      "receipt", "invoice", "payment confirmation", "order confirmation"
+    ];
+
+    const senderDomain = sender.split('@')[1]?.toLowerCase() || "";
+    const subject = email.subject.toLowerCase();
+
+    const isSystemEmail = 
+      SYSTEM_DOMAINS.some(domain => senderDomain.includes(domain)) ||
+      SYSTEM_KEYWORDS.some(keyword => subject.includes(keyword));
+
+    if (isSystemEmail) {
+      toast.info("This appears to be a system/transactional email", {
+        description: "Consider keeping these for account security",
+        duration: 5000,
+      });
+      // Still allow unsubscribe but warn the user
     }
 
     if (unsubscribeUrl.startsWith('mailto:')) {
@@ -1378,7 +1266,7 @@ if (!unsubscribeUrl && emailData?.payload?.headers) {
 
     if (unsubscribeUrl.startsWith('http')) {
       window.open(unsubscribeUrl, '_blank');
-
+      
       const updatedEmails = emails.map(e => 
         e.sender === sender 
           ? { ...e, action: 'unsubscribe' as EmailAction }
@@ -1401,6 +1289,7 @@ if (!unsubscribeUrl && emailData?.payload?.headers) {
     setProcessingEmailId(null);
   }
 };
+  
   const handleClean = async () => {
     const keepCount = emails.filter((e) => e.action === "keep").length;
     const deleteCount = emails.filter((e) => e.action === "delete").length;
