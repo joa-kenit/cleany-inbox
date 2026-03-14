@@ -401,40 +401,28 @@ const handleSignOut = async () => {
       console.log('[Gmail Fetch] Starting Gmail email fetch...');
       
       // Get the current session with provider token
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      if (sessionError) {
-        console.error('[Gmail Fetch] Session error:', sessionError);
-        toast.error('Failed to get authentication session');
-        setEmails([]);
-        return;
-      }
 
-      if (!session) {
-        console.error('[Gmail Fetch] No active session found');
-        toast.error('Please sign in to access your emails');
-        setEmails([]);
-        return;
-      }
+// Replace lines 404-436 with this:
+const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
-      console.log('[Gmail Fetch] Session found, checking for provider token...');
-      
-      // Check if provider token exists
-      const providerToken = session.provider_token;
-      
-      if (!providerToken) {
-        console.error('[Gmail Fetch] No provider token in session. Session data:', {
-          hasUser: !!session.user,
-          provider: session.user?.app_metadata?.provider,
-          providers: session.user?.app_metadata?.providers
-        });
-        toast.error('Gmail access not available. Please sign out and sign in again with Gmail permissions.');
-        setEmails([]);
-        return;
-      }
+// 👇 Add this: force a session refresh to get a fresh provider token
+const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+const activeSession = refreshed?.session ?? session;
 
-      console.log('[Gmail Fetch] Provider token found, fetching unique senders...');
+if (sessionError || !activeSession) {
+  toast.error('Please sign in to access your emails');
+  setEmails([]);
+  return;
+}
 
+const providerToken = activeSession.provider_token;
+
+if (!providerToken) {
+  // Token is gone — user must re-authenticate
+  toast.error('Gmail access expired. Please sign out and sign in again.');
+  setEmails([]);
+  return;
+}
       // First, get a list of unique senders (fetch 100 emails to get good sender coverage)
       const { data, error } = await supabase.functions.invoke('fetch-gmail-emails', {
         body: { 
